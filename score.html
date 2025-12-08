@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>國中成績追蹤系統 (同步加強版)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    
+    <!-- Prop-types -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    
+    <!-- Recharts -->
+    <script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        @keyframes pulse-blue {
+            0%, 100% { color: #3b82f6; opacity: 1; }
+            50% { color: #60a5fa; opacity: 0.5; }
+        }
+        .animate-sync {
+            animation: pulse-blue 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        /* Hide number input spinners */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        /**
+         * ------------------------------------------------------------------
+         * GitHub 加密設定區
+         * ------------------------------------------------------------------
+         * 使用說明：為了避免明碼暴露，請將您的資訊轉換為 Base64 字串填入。
+         * 轉換方式：在瀏覽器 Console 輸入 btoa('您的GitHubToken') 即可取得。
+         * 例如: btoa('ghp_abcdefg') -> 'Z2hwX2FiY2RlZmc='
+         */
+        const GITHUB_CONFIG = {
+            // 請填入 Base64 編碼後的字串
+            TOKEN: "", 
+            OWNER: "", 
+            REPO: "",  
+            PATH: "c2NvcmVfdHJhY2tlcl9kYXRhLmpzb24=" // 預設為 'score_tracker_data.json' 的 Base64
+        };
+
+        // 解密輔助函式
+        const safeDecode = (str) => {
+            try {
+                if (!str) return "";
+                return decodeURIComponent(escape(window.atob(str)));
+            } catch (e) {
+                console.warn("Config decode failed, assuming plain text.");
+                return str;
+            }
+        };
+
+        const { useState, useMemo, useEffect, useRef } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } = window.Recharts || {};
+
+        // --- Icons System ---
+        const IconBase = ({ size = 24, children, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>{children}</svg>
+        );
+
+        const Icons = {
+            AlertCircle: (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></IconBase>,
+            CheckCircle2: (p) => <IconBase {...p}><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></IconBase>,
+            TrendingUp: (p) => <IconBase {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></IconBase>,
+            TrendingDown: (p) => <IconBase {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></IconBase>,
+            Plus: (p) => <IconBase {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></IconBase>,
+            Save: (p) => <IconBase {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></IconBase>,
+            Activity: (p) => <IconBase {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></IconBase>,
+            BarChart3: (p) => <IconBase {...p}><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></IconBase>,
+            LayoutDashboard: (p) => <IconBase {...p}><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></IconBase>,
+            Trash2: (p) => <IconBase {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>,
+            Users: (p) => <IconBase {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></IconBase>,
+            Camera: (p) => <IconBase {...p}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></IconBase>,
+            Cloud: ({ size = 24, ...props }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none" {...props}><path d="M17.5,19c-0.3,0-0.5,0-0.8,0c-0.3,0-0.5,0-0.8,0c-0.4,0-0.8,0-1.2-0.1c-0.4-0.1-0.7-0.2-1.1-0.3c-0.3-0.1-0.6-0.3-1-0.5c-0.3-0.2-0.6-0.4-0.9-0.6c-0.3-0.3-0.5-0.5-0.8-0.8c-0.2-0.3-0.4-0.6-0.6-0.9c-0.2-0.3-0.3-0.7-0.4-1.1c0-0.4-0.1-0.8-0.1-1.2c0-2.2,1.8-4,4-4c0.3,0,0.7,0,1,0.1c0.3,0.1,0.6,0.1,0.9,0.2c0.3,0.1,0.5,0.2,0.8,0.4c0.2,0.1,0.5,0.3,0.7,0.5c0.2,0.2,0.4,0.4,0.6,0.7c0.2,0.2,0.3,0.5,0.4,0.8c0.1,0.3,0.2,0.5,0.2,0.8c0,0.3,0,0.5,0,0.8c0.6-0.6,1.3-1.1,2.1-1.3c0.8-0.3,1.7-0.3,2.5-0.1c0.8,0.2,1.6,0.6,2.2,1.2c0.6,0.6,1.1,1.3,1.3,2.1c0.3,0.8,0.3,1.7,0.1,2.5c-0.2,0.8-0.6,1.6-1.2,2.2c-0.6,0.6-1.3,1.1-2.1,1.3C21.7,18.8,20.9,19,20,19L17.5,19z M6,19c-2.2,0-4-1.8-4-4c0-2.1,1.6-3.9,3.7-4c0.1-2.2,1.9-4,4.2-4c1.6,0,3,0.9,3.7,2.2C14.2,8.5,15.1,8,16,8c2.8,0,5,2.2,5,5c0,0.3,0,0.5-0.1,0.8c1.9-0.5,3.9,0.2,5.1,1.7c1.2,1.6,1.4,3.7,0.5,5.4c-0.9,1.7-2.7,2.8-4.7,2.8L6,23.7V19z"/></svg>,
+            Edit: (p) => <IconBase {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></IconBase>,
+            Trophy: (p) => <IconBase {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></IconBase>,
+            ChevronDown: (p) => <IconBase {...p}><path d="m6 9 6 6 6-6"/></IconBase>,
+            ChevronUp: (p) => <IconBase {...p}><path d="m18 15-6-6-6 6"/></IconBase>,
+            Brain: (p) => <IconBase {...p}><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></IconBase>,
+            Calculator: (p) => <IconBase {...p}><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></IconBase>,
+        };
+
+        const SUBJECT_CONFIG = {
+            chinese: { label: '國文', color: '#ec4899' },
+            english: { label: '英文', color: '#8b5cf6' },
+            math: { label: '數學', color: '#3b82f6' },
+            bio: { label: '生物/自然', color: '#10b981' },
+            social: { label: '社會', color: '#f59e0b' },
+        };
+
+        const INITIAL_EXAMS = [
+            {
+                id: 'exam-1',
+                name: '七上-第二次段考',
+                classRank: 0,
+                schoolRank: 0,
+                subjects: {
+                    chinese: { score: 69, avg: 70.61, distribution: { '100': 0, '90-99': 2, '80-89': 8, '70-79': 9, '60-69': 10, '<60': 5 } },
+                    english: { score: 83, avg: 71.21, distribution: { '100': 0, '90-99': 4, '80-89': 9, '70-79': 8, '60-69': 6, '<60': 7 } },
+                    math: { score: 46, avg: 66.33, distribution: { '100': 0, '90-99': 4, '80-89': 5, '70-79': 6, '60-69': 11, '<60': 8 } },
+                    bio: { score: 92.5, avg: 74.34, distribution: { '100': 4, '90-99': 6, '80-89': 7, '70-79': 4, '60-69': 3, '<60': 10 } },
+                    social: { score: 50, avg: 69.53, distribution: { '100': 0, '90-99': 8, '80-89': 4, '70-79': 8, '60-69': 5, '<60': 9 } },
+                },
+                images: []
+            },
+        ];
+
+        // --- Helper Functions ---
+        const getStatus = (score, avg) => {
+            if (score >= 90 || score >= avg + 10) return { status: 'good', color: 'text-green-600', bg: 'bg-green-100', icon: Icons.CheckCircle2, text: '優異' };
+            if (score < 60 || score < avg - 10) return { status: 'warning', color: 'text-red-600', bg: 'bg-red-100', icon: Icons.AlertCircle, text: '關注' };
+            return { status: 'average', color: 'text-yellow-600', bg: 'bg-yellow-100', icon: Icons.Activity, text: '平穩' };
+        };
+
+        const getBucket = (score) => {
+            if (score === 100) return '100';
+            if (score >= 90) return '90-99';
+            if (score >= 80) return '80-89';
+            if (score >= 70) return '70-79';
+            if (score >= 60) return '60-69';
+            return '<60';
+        };
+
+        const calculateStats = (subjects) => {
+            if (!subjects) return { total: 0, avg: 0, bestSubj: null, worstSubj: null };
+            let total = 0;
+            let count = 0;
+            let best = { score: -1, label: '' };
+            let worst = { score: 999, label: '' };
+            let aboveAvgCount = 0;
+            Object.entries(subjects).forEach(([key, data]) => {
+                const score = Number(data.score) || 0;
+                total += score;
+                count++;
+                if (score > best.score) best = { score, label: SUBJECT_CONFIG[key].label };
+                if (score < worst.score) worst = { score, label: SUBJECT_CONFIG[key].label };
+                if (score >= (Number(data.avg) || 0)) aboveAvgCount++;
+            });
+            return {
+                total: parseFloat(total.toFixed(1)),
+                avg: count > 0 ? parseFloat((total / count).toFixed(1)) : 0,
+                bestSubj: best.score !== -1 ? best : null,
+                worstSubj: worst.score !== 999 ? worst : null,
+                aboveAvgCount,
+                totalSubjects: count
+            };
+        };
+
+        const resizeImage = (file, maxWidth = 800) => {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > maxWidth) {
+                            height = (height * maxWidth) / width;
+                            width = maxWidth;
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7)); 
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        // --- GitHub Operations ---
+        const getGitHubHeaders = () => {
+            const token = safeDecode(GITHUB_CONFIG.TOKEN);
+            return token ? { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' } : null;
+        };
+
+        const fetchFromGitHub = async () => {
+            const headers = getGitHubHeaders();
+            if (!headers || !safeDecode(GITHUB_CONFIG.OWNER) || !safeDecode(GITHUB_CONFIG.REPO)) return null;
+            
+            const url = `https://api.github.com/repos/${safeDecode(GITHUB_CONFIG.OWNER)}/${safeDecode(GITHUB_CONFIG.REPO)}/contents/${safeDecode(GITHUB_CONFIG.PATH)}`;
+            
+            try {
+                const res = await fetch(url, { headers: { ...headers, 'Cache-Control': 'no-cache' } });
+                if (!res.ok) throw new Error(res.statusText);
+                const data = await res.json();
+                // GitHub content is Base64 encoded
+                const content = decodeURIComponent(escape(window.atob(data.content)));
+                return { data: JSON.parse(content), sha: data.sha };
+            } catch (e) {
+                console.error("Fetch failed:", e);
+                return null;
+            }
+        };
+
+        const saveToGitHub = async (data) => {
+            const headers = getGitHubHeaders();
+            if (!headers) return { success: false, error: 'Config Missing' };
+
+            const owner = safeDecode(GITHUB_CONFIG.OWNER);
+            const repo = safeDecode(GITHUB_CONFIG.REPO);
+            const path = safeDecode(GITHUB_CONFIG.PATH);
+            const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+            try {
+                // 1. Get SHA first (to handle concurrency/updates)
+                let sha = null;
+                try {
+                    const getRes = await fetch(url, { headers });
+                    if (getRes.ok) sha = (await getRes.json()).sha;
+                } catch(e) {}
+
+                // 2. Upload
+                const contentStr = JSON.stringify(data, null, 2);
+                const contentBase64 = btoa(unescape(encodeURIComponent(contentStr)));
+
+                const putRes = await fetch(url, {
+                    method: 'PUT',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `Update scores: ${new Date().toLocaleString()}`,
+                        content: contentBase64,
+                        sha: sha || undefined
+                    })
+                });
+
+                if (!putRes.ok) throw new Error(`GitHub API Error: ${putRes.statusText}`);
+                return { success: true };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        };
+
+        // --- Components ---
+
+        const SyncIndicator = ({ status }) => {
+            let colorClass = "text-slate-400";
+            if (status === 'syncing') colorClass = "animate-sync text-blue-500";
+            if (status === 'success') colorClass = "text-green-500";
+            if (status === 'error') colorClass = "text-red-500";
+            return <div className={`transition-colors duration-500 ${colorClass}`} title={status === 'success' ? '已同步至雲端' : status}><Icons.Cloud size={24} /></div>;
+        };
+
+        const ExamModal = ({ isOpen, onClose, onSave, initialData }) => {
+            const [name, setName] = useState('');
+            const [classRank, setClassRank] = useState('');
+            const [schoolRank, setSchoolRank] = useState('');
+            const [subjects, setSubjects] = useState({});
+            const [images, setImages] = useState([]);
+            const [expandedSubject, setExpandedSubject] = useState(null); 
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                if (isOpen) {
+                    if (initialData) {
+                        setName(initialData.name);
+                        setClassRank(initialData.classRank || '');
+                        setSchoolRank(initialData.schoolRank || '');
+                        setSubjects(JSON.parse(JSON.stringify(initialData.subjects))); 
+                        setImages(initialData.images || []);
+                    } else {
+                        setName('');
+                        setClassRank('');
+                        setSchoolRank('');
+                        const defaultSubj = {};
+                        Object.keys(SUBJECT_CONFIG).forEach(k => {
+                            defaultSubj[k] = { 
+                                score: '', 
+                                avg: '', 
+                                distribution: { '100': 0, '90-99': 0, '80-89': 0, '70-79': 0, '60-69': 0, '<60': 0 } 
+                            };
+                        });
+                        setSubjects(defaultSubj);
+                        setImages([]);
+                    }
+                }
+            }, [isOpen, initialData]);
+
+            if (!isOpen) return null;
+
+            const handleFileChange = async (e) => {
+                if (e.target.files?.length) {
+                    const newImgs = [];
+                    for (let i = 0; i < e.target.files.length; i++) {
+                        newImgs.push(await resizeImage(e.target.files[i]));
+                    }
+                    setImages([...images, ...newImgs]);
+                }
+            };
+
+            const handleSubjectChange = (key, field, value) => {
+                setSubjects(prev => ({
+                    ...prev,
+                    [key]: { ...prev[key], [field]: value }
+                }));
+            };
+
+            const handleDistChange = (key, bucket, value) => {
+                setSubjects(prev => ({
+                    ...prev,
+                    [key]: {
+                        ...prev[key],
+                        distribution: {
+                            ...prev[key].distribution,
+                            [bucket]: Number(value)
+                        }
+                    }
+                }));
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const newExam = {
+                    id: initialData ? initialData.id : Date.now().toString(),
+                    name: name || '未命名考試',
+                    classRank: Number(classRank),
+                    schoolRank: Number(schoolRank),
+                    subjects: subjects, 
+                    images: images
+                };
+                onSave(newExam);
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center sticky top-0">
+                            <h3 className="font-bold text-lg text-slate-800">{initialData ? '編輯考試紀錄' : '新增考試紀錄'}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+                        </div>
+                        
+                        <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1 space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="md:col-span-1">
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">考試名稱</label>
+                                    <input required type="text" className="w-full p-2 border rounded-lg bg-slate-50 focus:bg-white transition-colors" value={name} onChange={(e) => setName(e.target.value)} placeholder="例: 七下段考1" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">班排 (選填)</label>
+                                    <input type="number" className="w-full p-2 border rounded-lg" value={classRank} onChange={(e) => setClassRank(e.target.value)} placeholder="名次" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">校排 (選填)</label>
+                                    <input type="number" className="w-full p-2 border rounded-lg" value={schoolRank} onChange={(e) => setSchoolRank(e.target.value)} placeholder="名次" />
+                                </div>
+                            </div>
+
+                            <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg">
+                                <label className="block text-sm font-bold text-blue-800 mb-2 flex items-center gap-2">
+                                    <Icons.Camera size={18} /> 成績單存檔
+                                </label>
+                                <div className="flex gap-2 items-center flex-wrap">
+                                    <button type="button" onClick={() => fileInputRef.current?.click()} className="px-3 py-2 bg-white border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-50 text-sm font-medium">
+                                        + 上傳照片
+                                    </button>
+                                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
+                                    {images.map((img, idx) => (
+                                        <div key={idx} className="relative w-12 h-12 rounded overflow-hidden border border-slate-300 group">
+                                            <img src={img} className="w-full h-full object-cover" />
+                                            <button type="button" onClick={() => setImages(images.filter((_, i) => i !== idx))} className="absolute inset-0 bg-black/50 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-end border-b pb-2">
+                                    <h4 className="font-bold text-slate-800">各科成績 & 落點分佈</h4>
+                                    <span className="text-xs text-slate-400">點擊箭頭展開詳細落點</span>
+                                </div>
+                                
+                                <div className="grid grid-cols-12 gap-2 text-xs font-medium text-slate-500 text-center px-2">
+                                    <div className="col-span-3 text-left">科目</div>
+                                    <div className="col-span-3">分數</div>
+                                    <div className="col-span-3">班平均</div>
+                                    <div className="col-span-3">落點</div>
+                                </div>
+
+                                {Object.entries(SUBJECT_CONFIG).map(([key, config]) => {
+                                    const isExpanded = expandedSubject === key;
+                                    const subjData = subjects[key] || {};
+                                    return (
+                                        <div key={key} className={`rounded-lg border transition-all ${isExpanded ? 'border-blue-300 bg-blue-50/30' : 'border-slate-200 bg-white'}`}>
+                                            <div className="grid grid-cols-12 gap-2 items-center p-2">
+                                                <div className="col-span-3 font-bold text-slate-700 flex items-center gap-2">
+                                                    <div className="w-2 h-8 rounded-l" style={{backgroundColor: config.color}}></div>
+                                                    {config.label}
+                                                </div>
+                                                <div className="col-span-3">
+                                                    <input type="number" required placeholder="0" className="w-full p-2 border border-slate-300 rounded text-center font-bold text-slate-800 focus:border-blue-500" 
+                                                        value={subjData.score} 
+                                                        onChange={(e) => handleSubjectChange(key, 'score', Number(e.target.value))} 
+                                                    />
+                                                </div>
+                                                <div className="col-span-3">
+                                                    <input type="number" required placeholder="0" className="w-full p-2 border border-slate-300 rounded text-center text-slate-600 focus:border-blue-500" 
+                                                        value={subjData.avg} 
+                                                        onChange={(e) => handleSubjectChange(key, 'avg', Number(e.target.value))} 
+                                                    />
+                                                </div>
+                                                <div className="col-span-3 flex justify-center">
+                                                    <button type="button" onClick={() => setExpandedSubject(isExpanded ? null : key)} 
+                                                        className={`p-2 rounded-full hover:bg-slate-100 transition-colors ${isExpanded ? 'text-blue-600 bg-blue-100' : 'text-slate-400'}`}>
+                                                        {isExpanded ? <Icons.ChevronUp size={18}/> : <Icons.ChevronDown size={18}/>}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            
+                                            {isExpanded && (
+                                                <div className="p-3 border-t border-blue-100 grid grid-cols-3 sm:grid-cols-6 gap-2 animate-in slide-in-from-top-2">
+                                                    {['100', '90-99', '80-89', '70-79', '60-69', '<60'].map(bucket => (
+                                                        <div key={bucket} className="flex flex-col items-center bg-white p-2 rounded border border-slate-100">
+                                                            <span className="text-[10px] text-slate-400 mb-1 font-mono">{bucket}</span>
+                                                            <input type="number" className="w-full text-center border-b border-blue-200 focus:border-blue-500 outline-none text-sm font-bold"
+                                                                value={subjData.distribution?.[bucket] || 0}
+                                                                onChange={(e) => handleDistChange(key, bucket, e.target.value)}
+                                                            />
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="pt-4 flex justify-end gap-3 sticky bottom-0 bg-white/90 backdrop-blur pb-2">
+                                <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+                                <button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-500/30">
+                                    <Icons.Save size={18} /> 儲存變更
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        const StudentManager = ({ students, currentId, onSwitch, onAdd, onDelete, onRename }) => {
+            const [isAdding, setIsAdding] = useState(false);
+            const [editingId, setEditingId] = useState(null);
+            const [nameInput, setNameInput] = useState('');
+
+            const startAdd = () => { setIsAdding(true); setNameInput(''); };
+            const startEdit = (id, currentName) => { setEditingId(id); setNameInput(currentName); };
+            
+            const confirmAdd = () => {
+                if (nameInput.trim()) onAdd(nameInput.trim());
+                setIsAdding(false);
+            };
+
+            const confirmEdit = () => {
+                if (nameInput.trim() && editingId) onRename(editingId, nameInput.trim());
+                setEditingId(null);
+            };
+
+            return (
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide p-2 -mx-2">
+                    {students.map(s => {
+                        const isCurrent = currentId === s.id;
+                        const isEditing = editingId === s.id;
+                        
+                        if (isEditing) {
+                            return (
+                                <div key={s.id} className="flex items-center gap-1 bg-white p-1 rounded-full border border-blue-500 shadow-md shrink-0">
+                                    <input autoFocus className="px-2 py-1 text-sm outline-none bg-transparent w-20" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && confirmEdit()} />
+                                    <button onClick={confirmEdit} className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center">✓</button>
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <button
+                                key={s.id}
+                                onClick={() => onSwitch(s.id)}
+                                className={`group flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap border shrink-0 ${
+                                    isCurrent
+                                    ? 'bg-slate-800 text-white border-slate-800 shadow-lg scale-105 z-10'
+                                    : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                                }`}
+                            >
+                                <Icons.Users size={14} />
+                                {s.name}
+                                {isCurrent && (
+                                    <span onClick={(e) => { e.stopPropagation(); startEdit(s.id, s.name); }} className="ml-1 p-1 rounded-full hover:bg-white/20 opacity-60 hover:opacity-100" title="修改名字">
+                                        <Icons.Edit size={12} />
+                                    </span>
+                                )}
+                                {students.length > 1 && isCurrent && (
+                                    <span onClick={(e) => { e.stopPropagation(); onDelete(s.id); }} className="ml-1 p-1 rounded-full hover:bg-red-500/20 text-red-300 hover:text-red-200" title="刪除學生">×</span>
+                                )}
+                            </button>
+                        );
+                    })}
+                    
+                    {isAdding ? (
+                        <div className="flex items-center gap-1 bg-white p-1 rounded-full border border-blue-200 shrink-0">
+                            <input autoFocus className="px-2 py-1 text-sm outline-none bg-transparent w-20" placeholder="名字..." value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && confirmAdd()} />
+                            <button onClick={confirmAdd} className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center">✓</button>
+                            <button onClick={() => setIsAdding(false)} className="w-6 h-6 text-slate-400 rounded-full flex items-center justify-center">✕</button>
+                        </div>
+                    ) : (
+                        <button onClick={startAdd} className="px-3 py-2 bg-blue-50 text-blue-600 rounded-full text-sm font-medium hover:bg-blue-100 transition-colors whitespace-nowrap shrink-0">
+                            + 新增孩子
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [students, setStudents] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('score_tracker_v2_students');
+                    if (saved) return JSON.parse(saved);
+                    const oldExams = localStorage.getItem('junior-high-score-tracker');
+                    if (oldExams) return [{ id: 's1', name: '我的孩子', exams: JSON.parse(oldExams) }];
+                } catch (e) {}
+                return [{ id: 's1', name: '我的孩子', exams: INITIAL_EXAMS }];
+            });
+
+            const [currentStudentId, setCurrentStudentId] = useState(() => students[0]?.id || 's1');
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'add', data: null });
+            const [selectedExamId, setSelectedExamId] = useState('');
+            const [syncStatus, setSyncStatus] = useState('idle');
+            const [dashboardSubject, setDashboardSubject] = useState('math'); 
+
+            const currentStudent = students.find(s => s.id === currentStudentId) || students[0];
+            const currentExams = currentStudent.exams || [];
+            
+            // --- Sync on Mount ---
+            useEffect(() => {
+                const initSync = async () => {
+                    if (GITHUB_CONFIG.TOKEN) {
+                        setSyncStatus('syncing');
+                        const remote = await fetchFromGitHub();
+                        if (remote && remote.data) {
+                            // Only update if data exists. 
+                            // Strategy: Always trust cloud on load (simple personal sync)
+                            setStudents(remote.data);
+                            setSyncStatus('success');
+                        } else {
+                            setSyncStatus('idle'); // No remote data or fetch failed, use local
+                        }
+                    }
+                };
+                initSync();
+            }, []); // Empty deps = run once on mount
+
+            useEffect(() => {
+                if (!selectedExamId && currentExams.length > 0) {
+                    setSelectedExamId(currentExams[currentExams.length - 1].id);
+                }
+            }, [currentExams, selectedExamId]);
+
+            // --- Auto Save & Sync on Change ---
+            useEffect(() => {
+                // Save to local
+                localStorage.setItem('score_tracker_v2_students', JSON.stringify(students));
+                
+                // Sync to Cloud (Debounced)
+                if (GITHUB_CONFIG.TOKEN) {
+                    setSyncStatus('syncing');
+                    const timer = setTimeout(async () => {
+                        const result = await saveToGitHub(students);
+                        setSyncStatus(result.success ? 'success' : 'error');
+                        if (result.success) setTimeout(() => setSyncStatus('idle'), 3000);
+                    }, 1000);
+                    return () => clearTimeout(timer);
+                }
+            }, [students]);
+
+            const updateStudents = (newStudents) => {
+                setStudents(newStudents);
+            };
+
+            const handleRenameStudent = (id, newName) => {
+                updateStudents(students.map(s => s.id === id ? { ...s, name: newName } : s));
+            };
+
+            const handleSaveExam = (examData) => {
+                const isEdit = modalConfig.type === 'edit';
+                updateStudents(students.map(s => {
+                    if (s.id === currentStudentId) {
+                        const newExams = isEdit 
+                            ? s.exams.map(e => e.id === examData.id ? examData : e)
+                            : [...s.exams, examData];
+                        return { ...s, exams: newExams };
+                    }
+                    return s;
+                }));
+                if (!isEdit) setSelectedExamId(examData.id);
+            };
+
+            const handleDeleteExam = () => {
+                if(!confirm('確定刪除此考試？')) return;
+                updateStudents(students.map(s => {
+                    if (s.id === currentStudentId) {
+                        return { ...s, exams: s.exams.filter(e => e.id !== selectedExamId) };
+                    }
+                    return s;
+                }));
+                const remaining = currentExams.filter(e => e.id !== selectedExamId);
+                setSelectedExamId(remaining.length ? remaining[remaining.length-1].id : '');
+            };
+
+            const currentExam = currentExams.find(e => e.id === selectedExamId);
+
+            // Chart Data Prep
+            const dashboardChartData = useMemo(() => {
+                if (!currentExam) return [];
+                const subj = currentExam.subjects[dashboardSubject] || currentExam.subjects['math'];
+                const buckets = ['100', '90-99', '80-89', '70-79', '60-69', '<60'];
+                const myBucket = getBucket(subj.score);
+                return buckets.map(b => ({
+                    name: b,
+                    count: subj.distribution?.[b] || 0,
+                    isMine: b === myBucket
+                }));
+            }, [currentExam, dashboardSubject]);
+
+            // Trend Data Prep (All Subjects)
+            const trendData = useMemo(() => {
+                return currentExams.map(e => {
+                    const point = { name: e.name };
+                    Object.keys(SUBJECT_CONFIG).forEach(subj => {
+                        point[subj] = e.subjects[subj]?.score || 0;
+                    });
+                    return point;
+                });
+            }, [currentExams]);
+
+            // Analysis Stats
+            const stats = useMemo(() => currentExam ? calculateStats(currentExam.subjects) : null, [currentExam]);
+
+            return (
+                <div className="min-h-screen pb-10">
+                    <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+                        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
+                                    <Icons.Activity size={20} />
+                                </div>
+                                <h1 className="text-xl font-bold text-slate-800 hidden sm:block">成績追蹤系統</h1>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <button 
+                                    onClick={() => setModalConfig({ isOpen: true, type: 'add', data: null })}
+                                    className="flex items-center gap-2 bg-slate-900 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-slate-800 shadow-lg"
+                                >
+                                    <Icons.Plus size={16} /> <span className="hidden sm:inline">新增考試</span>
+                                </button>
+                                <SyncIndicator status={syncStatus} />
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-4xl mx-auto px-4 py-6">
+                        <StudentManager 
+                            students={students} 
+                            currentId={currentStudentId} 
+                            onSwitch={setCurrentStudentId} 
+                            onAdd={(name) => updateStudents([...students, { id: Date.now().toString(), name, exams: [] }])}
+                            onDelete={(id) => {
+                                if(confirm('刪除？')) {
+                                    const rem = students.filter(s => s.id !== id);
+                                    updateStudents(rem.length ? rem : [{ id: 'new', name: '新學生', exams: [] }]);
+                                    if(rem.length) setCurrentStudentId(rem[0].id);
+                                }
+                            }}
+                            onRename={handleRenameStudent}
+                        />
+
+                        {currentExams.length === 0 ? (
+                            <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                                <p className="text-slate-400 mb-4">目前還沒有考試紀錄</p>
+                                <button onClick={() => setModalConfig({ isOpen: true, type: 'add', data: null })} className="text-blue-500 font-bold hover:underline">立即新增</button>
+                            </div>
+                        ) : (
+                            <>
+                                {/* Exam Selector */}
+                                <div className="mb-6 flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide p-2 -mx-2">
+                                    {currentExams.map(exam => (
+                                        <button
+                                            key={exam.id}
+                                            onClick={() => setSelectedExamId(exam.id)}
+                                            className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-medium transition-all border shrink-0 ${
+                                                selectedExamId === exam.id 
+                                                ? 'bg-blue-50 text-blue-700 border-blue-200 ring-2 ring-blue-500 ring-offset-1' 
+                                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {exam.name}
+                                        </button>
+                                    ))}
+                                    <div className="ml-auto flex gap-1 shrink-0 pl-2">
+                                        <button onClick={handleDeleteExam} className="p-2 text-slate-400 hover:text-red-500 rounded-full hover:bg-red-50" title="刪除">
+                                            <Icons.Trash2 size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="flex border-b border-slate-200 mb-6 w-full">
+                                    <button onClick={() => setActiveTab('dashboard')} className={`flex-1 flex justify-center items-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'dashboard' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+                                        <Icons.LayoutDashboard size={18} /> 成績總覽
+                                    </button>
+                                    <button onClick={() => setActiveTab('trends')} className={`flex-1 flex justify-center items-center gap-2 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'trends' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+                                        <Icons.TrendingUp size={18} /> 三年走勢
+                                    </button>
+                                </div>
+
+                                {activeTab === 'dashboard' && currentExam && (
+                                    <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+                                        
+                                        {/* Status & Analysis Card */}
+                                        <div className="bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-blue-500/20">
+                                            <div className="flex flex-col md:flex-row justify-between gap-6">
+                                                <div className="grid grid-cols-2 gap-x-8 gap-y-4 flex-1">
+                                                    <div>
+                                                        <div className="text-blue-100 text-sm mb-1 flex items-center gap-1"><Icons.Calculator size={14}/> 總分</div>
+                                                        <div className="text-3xl sm:text-4xl font-extrabold">{stats?.total}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-blue-100 text-sm mb-1 flex items-center gap-1"><Icons.Activity size={14}/> 平均</div>
+                                                        <div className="text-3xl sm:text-4xl font-extrabold">{stats?.avg}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-blue-100 text-sm mb-1 flex items-center gap-1"><Icons.Trophy size={14}/> 班排</div>
+                                                        <div className="text-xl sm:text-2xl font-bold">{currentExam.classRank || '-'}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-blue-100 text-sm mb-1 flex items-center gap-1"><Icons.Trophy size={14}/> 校排</div>
+                                                        <div className="text-xl sm:text-2xl font-bold">{currentExam.schoolRank || '-'}</div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 flex-1">
+                                                    <div className="text-sm font-bold text-blue-100 mb-2 flex items-center gap-2">
+                                                        <Icons.Brain size={16}/> 本次成績概況
+                                                    </div>
+                                                    <div className="text-sm space-y-1">
+                                                        {stats?.bestSubj && (
+                                                            <div className="flex justify-between gap-4">
+                                                                <span className="opacity-80">強勢科目</span>
+                                                                <span className="font-bold">{stats.bestSubj.label} ({stats.bestSubj.score})</span>
+                                                            </div>
+                                                        )}
+                                                        {stats?.worstSubj && (
+                                                            <div className="flex justify-between gap-4">
+                                                                <span className="opacity-80">需加油</span>
+                                                                <span className="font-bold text-yellow-300">{stats.worstSubj.label} ({stats.worstSubj.score})</span>
+                                                            </div>
+                                                        )}
+                                                        <div className="pt-2 mt-2 border-t border-white/10 text-xs opacity-90 leading-relaxed">
+                                                            {stats?.aboveAvgCount === stats?.totalSubjects 
+                                                                ? "太棒了！所有科目皆高於班平均，請繼續保持！🎉" 
+                                                                : stats?.aboveAvgCount >= stats?.totalSubjects / 2 
+                                                                    ? "整體表現不錯，大部分科目在水準之上。" 
+                                                                    : "部分科目低於班平均，建議針對弱科安排複習計畫。💪"}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {Object.keys(currentExam.subjects).map(key => {
+                                                const data = currentExam.subjects[key];
+                                                const { status, color, bg, icon: Icon, text } = getStatus(data.score, data.avg);
+                                                return (
+                                                    <div key={key} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all">
+                                                        <div className="flex justify-between items-start mb-2">
+                                                            <h3 className="font-bold text-slate-700">{SUBJECT_CONFIG[key].label}</h3>
+                                                            <span className={`px-2 py-0.5 rounded-md text-xs font-bold flex items-center gap-1 w-fit ${bg} ${color}`}>
+                                                                <Icon size={12} /> {text}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-end gap-1 mb-2">
+                                                            <span className={`text-3xl font-extrabold ${status === 'warning' ? 'text-red-500' : 'text-slate-800'}`}>{data.score}</span>
+                                                            <span className="text-slate-400 text-xs mb-1">分</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-xs text-slate-500">
+                                                            <span>均: {data.avg}</span>
+                                                            <span className={data.score >= data.avg ? 'text-green-500' : 'text-red-500'}>
+                                                                {data.score >= data.avg ? '+' : ''}{(data.score - data.avg).toFixed(1)}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                                                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                                    <Icons.BarChart3 className="text-blue-500"/> 落點分析
+                                                </h3>
+                                                <div className="flex gap-1 overflow-x-auto pb-1 max-w-full">
+                                                    {Object.keys(SUBJECT_CONFIG).map(k => (
+                                                        <button 
+                                                            key={k} 
+                                                            onClick={() => setDashboardSubject(k)}
+                                                            className={`px-2 py-1 text-xs rounded transition-colors whitespace-nowrap ${dashboardSubject === k ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                                        >
+                                                            {SUBJECT_CONFIG[k].label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="h-64">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={dashboardChartData}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                        <XAxis dataKey="name" stroke="#94a3b8" tick={{fontSize: 10}} />
+                                                        <RechartsTooltip cursor={{fill: '#f1f5f9'}} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}/>
+                                                        <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                                                            {dashboardChartData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={entry.isMine ? '#3b82f6' : '#cbd5e1'} />
+                                                            ))}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                            <p className="text-xs text-center text-slate-400 mt-2">
+                                                * 藍色長條為您的分數區間 ({currentExam.subjects[dashboardSubject]?.score}分)
+                                            </p>
+                                        </div>
+
+                                         {currentExam.images?.length > 0 && (
+                                            <div className="flex gap-2 overflow-x-auto pb-2">
+                                                {currentExam.images.map((img, i) => (
+                                                    <img key={i} src={img} className="h-24 rounded border cursor-pointer hover:opacity-80" onClick={() => { const w=window.open(""); w.document.write('<img src="'+img+'" style="width:100%"/>'); }} />
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Edit Button at Bottom */}
+                                        <div className="pt-4 pb-8">
+                                            <button 
+                                                onClick={() => currentExam && setModalConfig({ isOpen: true, type: 'edit', data: currentExam })}
+                                                className="w-full bg-white border border-slate-200 text-slate-600 font-bold py-3 rounded-xl shadow-sm hover:bg-slate-50 flex items-center justify-center gap-2 transition-colors"
+                                            >
+                                                <Icons.Edit size={18} /> 編輯此考試紀錄
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'trends' && (
+                                    <div className="bg-white p-6 rounded-xl border border-slate-200 h-96">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="font-bold text-slate-800">各科成績歷史走勢</h3>
+                                        </div>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <LineChart data={trendData}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                                                <XAxis dataKey="name" stroke="#64748b" tick={{fontSize: 10}} />
+                                                <YAxis domain={[0, 100]} />
+                                                <RechartsTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}/>
+                                                <Legend />
+                                                {Object.entries(SUBJECT_CONFIG).map(([key, config]) => (
+                                                    <Line 
+                                                        key={key}
+                                                        type="monotone" 
+                                                        dataKey={key} 
+                                                        name={config.label} 
+                                                        stroke={config.color} 
+                                                        strokeWidth={2}
+                                                        dot={{r: 4}}
+                                                    />
+                                                ))}
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </main>
+
+                    <ExamModal 
+                        isOpen={modalConfig.isOpen} 
+                        initialData={modalConfig.data}
+                        onClose={() => setModalConfig({ ...modalConfig, isOpen: false })} 
+                        onSave={handleSaveExam} 
+                    />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
