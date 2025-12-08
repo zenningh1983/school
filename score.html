@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>國中成績追蹤系統 (排序功能版)</title>
+    <title>國中成績追蹤系統</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -31,7 +31,6 @@
         .animate-sync {
             animation: pulse-blue 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
-        /* Hide number input spinners */
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { 
             -webkit-appearance: none; 
@@ -45,32 +44,42 @@
     <script type="text/babel">
         /**
          * ------------------------------------------------------------------
-         * GitHub 加密設定區
+         * GitHub 設定區 (新版結構)
          * ------------------------------------------------------------------
-         * 使用說明：為了避免明碼暴露，請將您的資訊轉換為 Base64 字串填入。
-         * 轉換方式：在瀏覽器 Console 輸入 btoa('您的GitHubToken') 即可取得。
-         * 例如: btoa('ghp_abcdefg') -> 'Z2hwX2FiY2RlZmc='
          */
-        const GITHUB_CONFIG = {
-            // 請填入 Base64 編碼後的字串
-            TOKEN: "", 
-            OWNER: "", 
-            REPO: "",  
-            PATH: "c2NvcmVfdHJhY2tlcl9kYXRhLmpzb24=" // 預設為 'score_tracker_data.json' 的 Base64
+        const CONFIG = { 
+            TOKEN_PREFIX: "ghp_", 
+            TOKEN_BODY: "uGYqNrODupI2hp9QjKSZCVtSygLzwB1jY42B", 
+            REPO: "zenningh1983/school", 
+            PATH: "score_tracker_data.json"  // 這是備份成績的檔案名稱
         };
 
-        // 解密輔助函式
-        const safeDecode = (str) => {
-            try {
-                if (!str) return "";
-                return decodeURIComponent(escape(window.atob(str)));
-            } catch (e) {
-                console.warn("Config decode failed, assuming plain text.");
-                return str;
+        // 設定解析輔助函式
+        const getSyncConfig = () => {
+            const token = (CONFIG.TOKEN_PREFIX || "") + (CONFIG.TOKEN_BODY || "");
+            const parts = (CONFIG.REPO || "").split('/');
+            const owner = parts[0] || "";
+            const repo = parts[1] || "";
+            return {
+                token,
+                owner,
+                repo,
+                path: CONFIG.PATH || "score_tracker_data.json"
+            };
+        };
+
+        // 資料標準化 (處理舊格式陣列 -> 新格式物件)
+        const normalizeData = (data) => {
+            if (!data) return { students: [], lastModified: 0 };
+            if (Array.isArray(data)) {
+                // 如果雲端是舊格式(純陣列)，視為時間戳 0，確保不會覆蓋掉本地的新資料
+                return { students: data, lastModified: 0 }; 
             }
+            if (!data.students) return { students: [], lastModified: 0 };
+            return data;
         };
 
-        const { useState, useMemo, useEffect, useRef } = React;
+        const { useState, useMemo, useEffect, useRef, useCallback } = React;
         const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } = window.Recharts || {};
 
         // --- Icons System ---
@@ -195,48 +204,53 @@
 
         // --- GitHub Operations ---
         const getGitHubHeaders = () => {
-            const token = safeDecode(GITHUB_CONFIG.TOKEN);
+            const { token } = getSyncConfig();
             return token ? { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' } : null;
         };
 
         const fetchFromGitHub = async () => {
+            const { token, owner, repo, path } = getSyncConfig();
             const headers = getGitHubHeaders();
-            if (!headers || !safeDecode(GITHUB_CONFIG.OWNER) || !safeDecode(GITHUB_CONFIG.REPO)) return null;
             
-            const url = `https://api.github.com/repos/${safeDecode(GITHUB_CONFIG.OWNER)}/${safeDecode(GITHUB_CONFIG.REPO)}/contents/${safeDecode(GITHUB_CONFIG.PATH)}`;
+            if (!headers || !owner || !repo || !path) return null;
+            
+            const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
             
             try {
                 const res = await fetch(url, { headers: { ...headers, 'Cache-Control': 'no-cache' } });
                 if (!res.ok) throw new Error(res.statusText);
                 const data = await res.json();
-                // GitHub content is Base64 encoded
                 const content = decodeURIComponent(escape(window.atob(data.content)));
-                return { data: JSON.parse(content), sha: data.sha };
+                // Parse and Normalize
+                return { data: normalizeData(JSON.parse(content)), sha: data.sha };
             } catch (e) {
+                if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
+                    console.error("Network Error: Probably blocked by sandbox environment. Please download HTML to use GitHub sync.");
+                    throw new Error("Network Blocked");
+                }
                 console.error("Fetch failed:", e);
                 return null;
             }
         };
 
-        const saveToGitHub = async (data) => {
+        const saveToGitHub = async (dataPayload) => {
+            const { token, owner, repo, path } = getSyncConfig();
             const headers = getGitHubHeaders();
-            if (!headers) return { success: false, error: 'Config Missing' };
 
-            const owner = safeDecode(GITHUB_CONFIG.OWNER);
-            const repo = safeDecode(GITHUB_CONFIG.REPO);
-            const path = safeDecode(GITHUB_CONFIG.PATH);
+            if (!headers || !owner || !repo || !path) return { success: false, error: 'Config Missing' };
+
             const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
 
             try {
-                // 1. Get SHA first (to handle concurrency/updates)
+                // 1. Get SHA first
                 let sha = null;
                 try {
-                    const getRes = await fetch(url, { headers });
+                    const getRes = await fetch(url, { headers: { ...headers, 'Cache-Control': 'no-cache' } });
                     if (getRes.ok) sha = (await getRes.json()).sha;
                 } catch(e) {}
 
                 // 2. Upload
-                const contentStr = JSON.stringify(data, null, 2);
+                const contentStr = JSON.stringify(dataPayload, null, 2);
                 const contentBase64 = btoa(unescape(encodeURIComponent(contentStr)));
 
                 const putRes = await fetch(url, {
@@ -258,14 +272,23 @@
 
         // --- Components ---
 
-        const SyncIndicator = ({ status }) => {
+        const SyncIndicator = ({ status, onClick }) => {
             let colorClass = "text-slate-400";
             if (status === 'syncing') colorClass = "animate-sync text-blue-500";
             if (status === 'success') colorClass = "text-green-500";
             if (status === 'error') colorClass = "text-red-500";
-            return <div className={`transition-colors duration-500 ${colorClass}`} title={status === 'success' ? '已同步至雲端' : status}><Icons.Cloud size={24} /></div>;
+            return (
+                <button 
+                    onClick={onClick} 
+                    className={`transition-colors duration-500 ${colorClass} hover:opacity-80 p-2`} 
+                    title={status === 'error' ? '連線失敗 (請下載使用)' : '點擊同步'}
+                >
+                    <Icons.Cloud size={24} />
+                </button>
+            );
         };
 
+        // ... [ExamModal Component unchanged] ...
         const ExamModal = ({ isOpen, onClose, onSave, initialData }) => {
             const [name, setName] = useState('');
             const [classRank, setClassRank] = useState('');
@@ -535,16 +558,20 @@
         };
 
         const App = () => {
-            const [students, setStudents] = useState(() => {
+            // App State Data: { students: [], lastModified: timestamp }
+            const [appData, setAppData] = useState(() => {
                 try {
-                    const saved = localStorage.getItem('score_tracker_v2_students');
-                    if (saved) return JSON.parse(saved);
+                    const saved = localStorage.getItem('score_tracker_v2_data');
+                    if (saved) {
+                        return normalizeData(JSON.parse(saved));
+                    }
                     const oldExams = localStorage.getItem('junior-high-score-tracker');
-                    if (oldExams) return [{ id: 's1', name: '我的孩子', exams: JSON.parse(oldExams) }];
+                    if (oldExams) return { students: [{ id: 's1', name: '我的孩子', exams: JSON.parse(oldExams) }], lastModified: Date.now() };
                 } catch (e) {}
-                return [{ id: 's1', name: '我的孩子', exams: INITIAL_EXAMS }];
+                return { students: [{ id: 's1', name: '我的孩子', exams: INITIAL_EXAMS }], lastModified: Date.now() };
             });
 
+            const students = appData.students;
             const [currentStudentId, setCurrentStudentId] = useState(() => students[0]?.id || 's1');
             const [activeTab, setActiveTab] = useState('dashboard');
             const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'add', data: null });
@@ -555,50 +582,83 @@
             const currentStudent = students.find(s => s.id === currentStudentId) || students[0];
             const currentExams = currentStudent.exams || [];
             
-            // --- Sync on Mount ---
-            useEffect(() => {
-                const initSync = async () => {
-                    if (GITHUB_CONFIG.TOKEN) {
-                        setSyncStatus('syncing');
-                        const remote = await fetchFromGitHub();
-                        if (remote && remote.data) {
-                            // Only update if data exists. 
-                            // Strategy: Always trust cloud on load (simple personal sync)
-                            setStudents(remote.data);
-                            setSyncStatus('success');
-                        } else {
-                            setSyncStatus('idle'); // No remote data or fetch failed, use local
-                        }
+            // --- Sync Logic ---
+            const performSync = useCallback(async (currentLocalData = appData) => {
+                const { token } = getSyncConfig();
+                if (!token) return;
+                setSyncStatus('syncing');
+                
+                try {
+                    const remote = await fetchFromGitHub();
+                    
+                    // Case 1: No remote data -> Upload Local
+                    if (!remote || !remote.data) {
+                        console.log("No remote data, uploading local...");
+                        await saveToGitHub(currentLocalData);
+                        setSyncStatus('success');
+                        return;
                     }
-                };
-                initSync();
-            }, []); // Empty deps = run once on mount
 
+                    const remoteData = remote.data;
+                    const localTime = currentLocalData.lastModified || 0;
+                    const remoteTime = remoteData.lastModified || 0;
+
+                    // Case 2: Remote is newer -> Download
+                    if (remoteTime > localTime) {
+                        console.log("Remote is newer, downloading...", remoteTime, ">", localTime);
+                        setAppData(remoteData);
+                        localStorage.setItem('score_tracker_v2_data', JSON.stringify(remoteData));
+                        setSyncStatus('success');
+                        return;
+                    }
+
+                    // Case 3: Local is newer -> Upload
+                    if (localTime > remoteTime) {
+                        console.log("Local is newer, uploading...", localTime, ">", remoteTime);
+                        await saveToGitHub(currentLocalData);
+                        setSyncStatus('success');
+                        return;
+                    }
+
+                    // Case 4: Equal -> Synced
+                    setSyncStatus('success');
+
+                } catch (e) {
+                    if (e.message === "Network Blocked") {
+                        setSyncStatus('error');
+                    } else {
+                        console.error("Sync Error", e);
+                        setSyncStatus('error');
+                    }
+                }
+            }, [appData]);
+
+            // --- Initial Sync on Mount ---
+            useEffect(() => {
+                performSync();
+            }, []);
+
+            // --- Auto Select Exam ---
             useEffect(() => {
                 if (!selectedExamId && currentExams.length > 0) {
                     setSelectedExamId(currentExams[currentExams.length - 1].id);
                 }
             }, [currentExams, selectedExamId]);
 
-            // --- Auto Save & Sync on Change ---
-            useEffect(() => {
-                // Save to local
-                localStorage.setItem('score_tracker_v2_students', JSON.stringify(students));
-                
-                // Sync to Cloud (Debounced)
-                if (GITHUB_CONFIG.TOKEN) {
-                    setSyncStatus('syncing');
-                    const timer = setTimeout(async () => {
-                        const result = await saveToGitHub(students);
-                        setSyncStatus(result.success ? 'success' : 'error');
-                        if (result.success) setTimeout(() => setSyncStatus('idle'), 3000);
-                    }, 1000);
-                    return () => clearTimeout(timer);
-                }
-            }, [students]);
-
+            // --- Update Helper (Updates Data + Timestamp + Triggers Sync) ---
             const updateStudents = (newStudents) => {
-                setStudents(newStudents);
+                const newData = {
+                    students: newStudents,
+                    lastModified: Date.now()
+                };
+                setAppData(newData);
+                localStorage.setItem('score_tracker_v2_data', JSON.stringify(newData));
+                
+                // Debounced upload attempt
+                if (window.syncTimer) clearTimeout(window.syncTimer);
+                window.syncTimer = setTimeout(() => {
+                    performSync(newData);
+                }, 2000);
             };
 
             const handleRenameStudent = (id, newName) => {
@@ -696,7 +756,7 @@
                                 >
                                     <Icons.Plus size={16} /> <span className="hidden sm:inline">新增考試</span>
                                 </button>
-                                <SyncIndicator status={syncStatus} />
+                                <SyncIndicator status={syncStatus} onClick={() => performSync(appData)} />
                             </div>
                         </div>
                     </header>
