@@ -6,8 +6,8 @@
       "exams": [
         {
           "id": "exam-1",
-          "name": "七上-第二次段考",
-          "classRank": 0,
+          "name": "七上二段",
+          "classRank": 22,
           "schoolRank": 0,
           "subjects": {
             "chinese": {
@@ -80,5 +80,5 @@
       ]
     }
   ],
-  "lastModified": 1765286934708
+  "lastModified": 1765286952004
 }
