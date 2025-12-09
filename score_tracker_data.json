@@ -6,7 +6,7 @@
       "exams": [
         {
           "id": "exam-1",
-          "name": "七上-第二次段考",
+          "name": "七上二段",
           "classRank": 0,
           "schoolRank": 0,
           "subjects": {
@@ -80,5 +80,5 @@
       ]
     }
   ],
-  "lastModified": 1765288861582
+  "lastModified": 1765288876787
 }
