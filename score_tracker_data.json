@@ -21,7 +21,9 @@
                 "60-69": 10,
                 "<60": 5
               },
-              "images": []
+              "images": [
+                "https://raw.githubusercontent.com/zenningh1983/school/main/七上-第二次段考/chinese_1765286886837.jpg"
+              ]
             },
             "english": {
               "score": 83,
@@ -80,5 +82,5 @@
       ]
     }
   ],
-  "lastModified": 1765286696561
+  "lastModified": 1765286890668
 }
