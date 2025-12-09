@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>國中成績追蹤系統</title>
+    <title>成績追蹤系統</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -24,13 +24,6 @@
     <style>
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        @keyframes pulse-blue {
-            0%, 100% { color: #3b82f6; opacity: 1; }
-            50% { color: #60a5fa; opacity: 0.5; }
-        }
-        .animate-sync {
-            animation: pulse-blue 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
         input[type=number]::-webkit-inner-spin-button, 
         input[type=number]::-webkit-outer-spin-button { 
             -webkit-appearance: none; 
@@ -42,44 +35,17 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        /**
-         * ------------------------------------------------------------------
-         * GitHub 設定區 (新版結構)
-         * ------------------------------------------------------------------
-         */
-        const CONFIG = { 
-            TOKEN_PREFIX: "ghp_", 
-            TOKEN_BODY: "uGYqNrODupI2hp9QjKSZCVtSygLzwB1jY42B", 
-            REPO: "zenningh1983/school", 
-            PATH: "score_tracker_data.json"  // 這是備份成績的檔案名稱
-        };
-
-        // 設定解析輔助函式
-        const getSyncConfig = () => {
-            const token = (CONFIG.TOKEN_PREFIX || "") + (CONFIG.TOKEN_BODY || "");
-            const parts = (CONFIG.REPO || "").split('/');
-            const owner = parts[0] || "";
-            const repo = parts[1] || "";
-            return {
-                token,
-                owner,
-                repo,
-                path: CONFIG.PATH || "score_tracker_data.json"
-            };
-        };
-
-        // 資料標準化 (處理舊格式陣列 -> 新格式物件)
+        // 資料標準化輔助函式 (確保舊資料格式相容)
         const normalizeData = (data) => {
             if (!data) return { students: [], lastModified: 0 };
             if (Array.isArray(data)) {
-                // 如果雲端是舊格式(純陣列)，視為時間戳 0，確保不會覆蓋掉本地的新資料
                 return { students: data, lastModified: 0 }; 
             }
             if (!data.students) return { students: [], lastModified: 0 };
             return data;
         };
 
-        const { useState, useMemo, useEffect, useRef, useCallback } = React;
+        const { useState, useMemo, useEffect, useRef } = React;
         const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip, Legend, ResponsiveContainer, BarChart, Bar, Cell } = window.Recharts || {};
 
         // --- Icons System ---
@@ -100,7 +66,6 @@
             Trash2: (p) => <IconBase {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>,
             Users: (p) => <IconBase {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></IconBase>,
             Camera: (p) => <IconBase {...p}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></IconBase>,
-            Cloud: ({ size = 24, ...props }) => <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none" {...props}><path d="M17.5,19c-0.3,0-0.5,0-0.8,0c-0.3,0-0.5,0-0.8,0c-0.4,0-0.8,0-1.2-0.1c-0.4-0.1-0.7-0.2-1.1-0.3c-0.3-0.1-0.6-0.3-1-0.5c-0.3-0.2-0.6-0.4-0.9-0.6c-0.3-0.3-0.5-0.5-0.8-0.8c-0.2-0.3-0.4-0.6-0.6-0.9c-0.2-0.3-0.3-0.7-0.4-1.1c0-0.4-0.1-0.8-0.1-1.2c0-2.2,1.8-4,4-4c0.3,0,0.7,0,1,0.1c0.3,0.1,0.6,0.1,0.9,0.2c0.3,0.1,0.5,0.2,0.8,0.4c0.2,0.1,0.5,0.3,0.7,0.5c0.2,0.2,0.4,0.4,0.6,0.7c0.2,0.2,0.3,0.5,0.4,0.8c0.1,0.3,0.2,0.5,0.2,0.8c0,0.3,0,0.5,0,0.8c0.6-0.6,1.3-1.1,2.1-1.3c0.8-0.3,1.7-0.3,2.5-0.1c0.8,0.2,1.6,0.6,2.2,1.2c0.6,0.6,1.1,1.3,1.3,2.1c0.3,0.8,0.3,1.7,0.1,2.5c-0.2,0.8-0.6,1.6-1.2,2.2c-0.6,0.6-1.3,1.1-2.1,1.3C21.7,18.8,20.9,19,20,19L17.5,19z M6,19c-2.2,0-4-1.8-4-4c0-2.1,1.6-3.9,3.7-4c0.1-2.2,1.9-4,4.2-4c1.6,0,3,0.9,3.7,2.2C14.2,8.5,15.1,8,16,8c2.8,0,5,2.2,5,5c0,0.3,0,0.5-0.1,0.8c1.9-0.5,3.9,0.2,5.1,1.7c1.2,1.6,1.4,3.7,0.5,5.4c-0.9,1.7-2.7,2.8-4.7,2.8L6,23.7V19z"/></svg>,
             Edit: (p) => <IconBase {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></IconBase>,
             Trophy: (p) => <IconBase {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></IconBase>,
             ChevronDown: (p) => <IconBase {...p}><path d="m6 9 6 6 6-6"/></IconBase>,
@@ -202,93 +167,8 @@
             });
         };
 
-        // --- GitHub Operations ---
-        const getGitHubHeaders = () => {
-            const { token } = getSyncConfig();
-            return token ? { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' } : null;
-        };
-
-        const fetchFromGitHub = async () => {
-            const { token, owner, repo, path } = getSyncConfig();
-            const headers = getGitHubHeaders();
-            
-            if (!headers || !owner || !repo || !path) return null;
-            
-            const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-            
-            try {
-                const res = await fetch(url, { headers: { ...headers, 'Cache-Control': 'no-cache' } });
-                if (!res.ok) throw new Error(res.statusText);
-                const data = await res.json();
-                const content = decodeURIComponent(escape(window.atob(data.content)));
-                // Parse and Normalize
-                return { data: normalizeData(JSON.parse(content)), sha: data.sha };
-            } catch (e) {
-                if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
-                    console.error("Network Error: Probably blocked by sandbox environment. Please download HTML to use GitHub sync.");
-                    throw new Error("Network Blocked");
-                }
-                console.error("Fetch failed:", e);
-                return null;
-            }
-        };
-
-        const saveToGitHub = async (dataPayload) => {
-            const { token, owner, repo, path } = getSyncConfig();
-            const headers = getGitHubHeaders();
-
-            if (!headers || !owner || !repo || !path) return { success: false, error: 'Config Missing' };
-
-            const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-
-            try {
-                // 1. Get SHA first
-                let sha = null;
-                try {
-                    const getRes = await fetch(url, { headers: { ...headers, 'Cache-Control': 'no-cache' } });
-                    if (getRes.ok) sha = (await getRes.json()).sha;
-                } catch(e) {}
-
-                // 2. Upload
-                const contentStr = JSON.stringify(dataPayload, null, 2);
-                const contentBase64 = btoa(unescape(encodeURIComponent(contentStr)));
-
-                const putRes = await fetch(url, {
-                    method: 'PUT',
-                    headers: { ...headers, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: `Update scores: ${new Date().toLocaleString()}`,
-                        content: contentBase64,
-                        sha: sha || undefined
-                    })
-                });
-
-                if (!putRes.ok) throw new Error(`GitHub API Error: ${putRes.statusText}`);
-                return { success: true };
-            } catch (error) {
-                return { success: false, error: error.message };
-            }
-        };
-
         // --- Components ---
 
-        const SyncIndicator = ({ status, onClick }) => {
-            let colorClass = "text-slate-400";
-            if (status === 'syncing') colorClass = "animate-sync text-blue-500";
-            if (status === 'success') colorClass = "text-green-500";
-            if (status === 'error') colorClass = "text-red-500";
-            return (
-                <button 
-                    onClick={onClick} 
-                    className={`transition-colors duration-500 ${colorClass} hover:opacity-80 p-2`} 
-                    title={status === 'error' ? '連線失敗 (請下載使用)' : '點擊同步'}
-                >
-                    <Icons.Cloud size={24} />
-                </button>
-            );
-        };
-
-        // ... [ExamModal Component unchanged] ...
         const ExamModal = ({ isOpen, onClose, onSave, initialData }) => {
             const [name, setName] = useState('');
             const [classRank, setClassRank] = useState('');
@@ -576,68 +456,11 @@
             const [activeTab, setActiveTab] = useState('dashboard');
             const [modalConfig, setModalConfig] = useState({ isOpen: false, type: 'add', data: null });
             const [selectedExamId, setSelectedExamId] = useState('');
-            const [syncStatus, setSyncStatus] = useState('idle');
             const [dashboardSubject, setDashboardSubject] = useState('math'); 
 
             const currentStudent = students.find(s => s.id === currentStudentId) || students[0];
             const currentExams = currentStudent.exams || [];
             
-            // --- Sync Logic ---
-            const performSync = useCallback(async (currentLocalData = appData) => {
-                const { token } = getSyncConfig();
-                if (!token) return;
-                setSyncStatus('syncing');
-                
-                try {
-                    const remote = await fetchFromGitHub();
-                    
-                    // Case 1: No remote data -> Upload Local
-                    if (!remote || !remote.data) {
-                        console.log("No remote data, uploading local...");
-                        await saveToGitHub(currentLocalData);
-                        setSyncStatus('success');
-                        return;
-                    }
-
-                    const remoteData = remote.data;
-                    const localTime = currentLocalData.lastModified || 0;
-                    const remoteTime = remoteData.lastModified || 0;
-
-                    // Case 2: Remote is newer -> Download
-                    if (remoteTime > localTime) {
-                        console.log("Remote is newer, downloading...", remoteTime, ">", localTime);
-                        setAppData(remoteData);
-                        localStorage.setItem('score_tracker_v2_data', JSON.stringify(remoteData));
-                        setSyncStatus('success');
-                        return;
-                    }
-
-                    // Case 3: Local is newer -> Upload
-                    if (localTime > remoteTime) {
-                        console.log("Local is newer, uploading...", localTime, ">", remoteTime);
-                        await saveToGitHub(currentLocalData);
-                        setSyncStatus('success');
-                        return;
-                    }
-
-                    // Case 4: Equal -> Synced
-                    setSyncStatus('success');
-
-                } catch (e) {
-                    if (e.message === "Network Blocked") {
-                        setSyncStatus('error');
-                    } else {
-                        console.error("Sync Error", e);
-                        setSyncStatus('error');
-                    }
-                }
-            }, [appData]);
-
-            // --- Initial Sync on Mount ---
-            useEffect(() => {
-                performSync();
-            }, []);
-
             // --- Auto Select Exam ---
             useEffect(() => {
                 if (!selectedExamId && currentExams.length > 0) {
@@ -645,7 +468,7 @@
                 }
             }, [currentExams, selectedExamId]);
 
-            // --- Update Helper (Updates Data + Timestamp + Triggers Sync) ---
+            // --- Update Helper (Updates Data + Timestamp) ---
             const updateStudents = (newStudents) => {
                 const newData = {
                     students: newStudents,
@@ -653,12 +476,6 @@
                 };
                 setAppData(newData);
                 localStorage.setItem('score_tracker_v2_data', JSON.stringify(newData));
-                
-                // Debounced upload attempt
-                if (window.syncTimer) clearTimeout(window.syncTimer);
-                window.syncTimer = setTimeout(() => {
-                    performSync(newData);
-                }, 2000);
             };
 
             const handleRenameStudent = (id, newName) => {
@@ -756,7 +573,6 @@
                                 >
                                     <Icons.Plus size={16} /> <span className="hidden sm:inline">新增考試</span>
                                 </button>
-                                <SyncIndicator status={syncStatus} onClick={() => performSync(appData)} />
                             </div>
                         </div>
                     </header>
