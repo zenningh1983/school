@@ -80,7 +80,7 @@
         {
           "id": "exam-1",
           "name": "七上二段",
-          "classRank": 0,
+          "classRank": 22,
           "schoolRank": 0,
           "subjects": {
             "chinese": {
@@ -153,5 +153,5 @@
       ]
     }
   ],
-  "lastModified": 1765289070779
+  "lastModified": 1765289083201
 }
